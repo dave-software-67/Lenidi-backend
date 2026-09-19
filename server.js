@@ -61,14 +61,14 @@ app.post('/webhook/paystack', (req, res) => {
     }
     res.sendStatus(200);
   } catch (err) {
-    res.sendileStatus(200);
+    res.sendStatus(200);
   }
 });
 
-app.get('/check-payment/:reference', (req, res) =>age {
+app.get('/check-payment/:reference', (req, res) => {
   const ref = req.params.reference;
   const payment = payments[ref];
-  if (!payment) return res.json({ status: 'not,_found' });
+  if (!payment) return res.json({ status: 'not_found' });
   res.json({ status: payment.status, plan: payment.plan, amount: payment.amount, type: payment.type, email: payment.email });
 });
 
@@ -107,7 +107,7 @@ app.post('/products', async (req, res) => {
       storage: p.storage, ram: p.ram, network: p.network, card_slot: p.card_slot,
       rear_cam: p.rear_cam, front_cam: p.front_cam, screen_size: p.screen_size,
       display_type: p.display_type, chipset: p.chipset, sim: p.sim, os: p.os,
-      battery: p.battery, year: p.year, mileage: p.m transmission: p.transmission,
+      battery: p.battery, year: p.year, mileage: p.mileage, transmission: p.transmission,
       fuel: p.fuel, bedrooms: p.bedrooms, bathrooms: p.bathrooms, size: p.size,
       processor: p.processor, material: p.material, company: p.company,
       job_type: p.job_type, salary: p.salary, service_type: p.service_type,
