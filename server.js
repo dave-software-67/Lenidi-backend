@@ -34,7 +34,7 @@ app.get('/public-key', (req, res) => {
 });
 
 // ============================================================
-// PAYSTACK — CREATE PAYMENT
+// PAYSTACK
 // ============================================================
 app.post('/create-payment', async (req, res) => {
   try {
@@ -42,7 +42,6 @@ app.post('/create-payment', async (req, res) => {
     if (!email || !amount) return res.status(400).json({ error: 'Email and amount required' });
 
     const reference = 'LENIDI_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-
     payments[reference] = {
       email: email.toLowerCase(), plan: plan || null, amount: amount,
       type: type || 'boost', status: 'pending', createdAt: Date.now()
@@ -64,8 +63,8 @@ app.post('/create-payment', async (req, res) => {
 
     res.json({
       reference: reference,
-      publicKey:: PAYSTACK_PUBLIC,
-      email email,
+      publicKey: PAYSTACK_PUBLIC,
+      email: email,
       authorization_url: paystackRes.data.data.authorization_url,
       access_code: paystackRes.data.data.access_code
     });
@@ -75,16 +74,10 @@ app.post('/create-payment', async (req, res) => {
   }
 });
 
-// ============================================================
-// PAYMENT SUCCESS PAGE
-// ============================================================
 app.get('/payment-success', (req, res) => {
-  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment Successful</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f7fa;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}.card{background:#fff;border-radius:20px;padding:32px 24px;max-width:380px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.08);}.icon{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:36px;}h1{font-size:22px;color:#1e2a3a;margin-bottom:8px;}p{font-size:14px;color:#5e6f7e;line-height:1.6;margin-bottom:20px;}.brand{font-size:24px;font-weight:800;color:#ff6b00;margin-bottom:16px;}</style></head><body><div class="card"><div class="brand">Lenidi</div><div class="icon">✓</div><h1>Payment Successful!</h1><p>Your payment has been received. Please return to the Lenidi app — your purchase will be confirmed automatically within a few seconds.</p></div></body></html>`);
+  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment Successful</title><style>body{font-family:sans-serif;background:#f5f7fa;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}.card{background:#fff;border-radius:20px;padding:32px 24px;max-width:380px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.08);}.icon{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:36px;}h1{font-size:22px;color:#1e2a3a;margin-bottom:8px;}p{font-size:14px;color:#5e6f7e;line-height:1.6;margin-bottom:20px;}.brand{font-size:24px;font-weight:800;color:#ff6b00;margin-bottom:16px;}</style></head><body><div class="card"><div class="brand">Lenidi</div><div class="icon">✓</div><h1>Payment Successful!</h1><p>Your payment has been received. Please return to the Lenidi app.</p></div></body></html>');
 });
 
-// ============================================================
-// PAYSTACK WEBHOOK
-// ============================================================
 app.post('/webhook/paystack', (req, res) => {
   try {
     const event = req.body;
@@ -96,9 +89,6 @@ app.post('/webhook/paystack', (req, res) => {
   } catch (err) { res.sendStatus(200); }
 });
 
-// ============================================================
-// CHECK PAYMENT
-// ============================================================
 app.get('/check-payment/:reference', async (req, res) => {
   const ref = req.params.reference;
   try {
@@ -220,8 +210,7 @@ app.post('/change-email', async (req, res) => {
     if (!old_email || !new_email) return res.status(400).json({ error: 'old and new email required' });
     const oldE = old_email.toLowerCase();
     const newE = new_email.toLowerCase();
-    const userRes = await supabase.from('users').update({ email: newE }).eq('email', oldE);
-    if (userRes.error) throw userRes.error;
+    await supabase.from('users').update({ email: newE }).eq('email', oldE);
     await supabase.from('products').update({ seller_email: newE }).eq('seller_email', oldE);
     await supabase.from('reports').update({ reporter_email: newE }).eq('reporter_email', oldE);
     await supabase.from('reports').update({ reported_email: newE }).eq('reported_email', oldE);
@@ -242,8 +231,6 @@ app.post('/update-my-products', async (req, res) => {
 // ============================================================
 // REFERRAL SYSTEM
 // ============================================================
-
-// Set user's referral code (max 10 chars, must be unique)
 app.post('/referral/set-code', async (req, res) => {
   try {
     const { email, code } = req.body;
@@ -251,7 +238,6 @@ app.post('/referral/set-code', async (req, res) => {
     const cleanCode = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
     if (cleanCode.length < 3) return res.status(400).json({ error: 'Code must be at least 3 characters' });
 
-    // Check if code is taken by another user
     const { data: existing } = await supabase.from('users').select('email, referral_code').eq('referral_code', cleanCode).single();
     if (existing && existing.email !== email.toLowerCase()) {
       return res.json({ success: false, taken: true, error: 'TAKEN' });
@@ -264,7 +250,6 @@ app.post('/referral/set-code', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Get user's referral info
 app.get('/referral/info/:email', async (req, res) => {
   try {
     const result = await supabase.from('users').select('referral_code, referrals_count, claimed_vip_reward, referred_by').eq('email', req.params.email.toLowerCase()).single();
@@ -274,7 +259,6 @@ app.get('/referral/info/:email', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Redeem a referral code (new user enters someone else's code)
 app.post('/referral/redeem', async (req, res) => {
   try {
     const { email, code } = req.body;
@@ -282,27 +266,21 @@ app.post('/referral/redeem', async (req, res) => {
     const cleanCode = String(code).trim().toUpperCase();
     const lowerEmail = email.toLowerCase();
 
-    // Find the user who owns this code
     const { data: owner } = await supabase.from('users').select('*').eq('referral_code', cleanCode).single();
     if (!owner) return res.json({ success: false, error: 'Invalid code' });
     if (owner.email === lowerEmail) return res.json({ success: false, error: "Can't use your own code" });
 
-    // Get current user
     const { data: me } = await supabase.from('users').select('*').eq('email', lowerEmail).single();
     if (me && me.referred_by) return res.json({ success: false, error: 'You already used a referral code' });
 
-    // Increment owner's referrals_count
     const newCount = (owner.referrals_count || 0) + 1;
     await supabase.from('users').update({ referrals_count: newCount }).eq('email', owner.email);
-
-    // Mark current user as referred
     await supabase.from('users').upsert([{ email: lowerEmail, referred_by: cleanCode }], { onConflict: 'email' });
 
     res.json({ success: true, owner_email: owner.email, count: newCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Claim VIP reward (only when referrals_count >= 100)
 app.post('/referral/claim-vip', async (req, res) => {
   try {
     const { email } = req.body;
@@ -327,7 +305,7 @@ app.post('/referral/claim-vip', async (req, res) => {
 });
 
 // ============================================================
-// REPORTS
+// REPORTS & BLOCKS
 // ============================================================
 app.post('/reports', async (req, res) => {
   try {
@@ -337,9 +315,6 @@ app.post('/reports', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============================================================
-// BLOCKED USERS
-// ============================================================
 app.post('/blocks', async (req, res) => {
   try {
     const result = await supabase.from('blocked_users').insert([req.body]).select().single();
@@ -351,7 +326,6 @@ app.post('/blocks', async (req, res) => {
 // ============================================================
 // ADMIN ROUTES
 // ============================================================
-
 app.get('/admin/users', async (req, res) => {
   try {
     const result = await supabase.from('users').select('*').order('last_active', { ascending: false }).limit(500);
@@ -415,18 +389,13 @@ app.post('/admin/ban-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ✅ NEW — Delete user (soft delete)
 app.post('/admin/delete-user', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'email required' });
     const lower = email.toLowerCase();
-
-    // Mark as deleted
     await supabase.from('users').update({ deleted: true, status: 'deleted' }).eq('email', lower);
-    // Remove their products
     await supabase.from('products').delete().eq('seller_email', lower);
-
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
