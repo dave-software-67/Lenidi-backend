@@ -22,7 +22,7 @@ app.use(express.json({ limit: '10mb' }));
 
 const payments = {};
 
-app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend' }); });
+app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 3 }); });
 app.get('/public-key', (req, res) => { res.json({ publicKey: PAYSTACK_PUBLIC }); });
 
 // ============================================================
@@ -46,7 +46,7 @@ app.post('/create-payment', async (req, res) => {
 });
 
 app.get('/payment-success', (req, res) => {
-  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment Successful</title><style>body{font-family:sans-serif;background:#f5f7fa;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}.card{background:#fff;border-radius:20px;padding:32px 24px;max-width:380px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.08);}.icon{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:36px;}h1{font-size:22px;color:#1e2a3a;margin-bottom:8px;}p{font-size:14px;color:#5e6f7e;line-height:1.6;margin-bottom:20px;}.brand{font-size:24px;font-weight:800;color:#ff6b00;margin-bottom:16px;}</style></head><body><div class="card"><div class="brand">Lenidi</div><div class="icon">✓</div><h1>Payment Successful!</h1><p>Your payment has been received. Please return to the Lenidi app.</p></div></body></html>');
+  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment Successful</title><style>body{font-family:sans-serif;background:#f5f7fa;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}.card{background:#fff;border-radius:20px;padding:32px 24px;max-width:380px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.08);}.icon{width:72px;height:72px;border-radius:50%;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:36px;}h1{font-size:22px;color:#1e2a3a;margin-bottom:8px;}p{font-size:14px;color:#5e6f7e;line-height:1.6;margin-bottom:20px;}.brand{font-size:24px;font-weight:800;color:#ff6b00;margin-bottom:16px;}</style></head><body><div class="card"><div class="brand">Lenidi</div><div class="icon">✓</div><h1>Payment Successful!</h1><p>Please return to the Lenidi app.</p></div></body></html>');
 });
 
 app.post('/webhook/paystack', (req, res) => {
@@ -100,9 +100,8 @@ app.post('/products', async (req, res) => {
       category: p.category, location: p.location, description: p.description,
       seller_email: p.seller_email, seller_name: p.seller_name, seller_phone: p.seller_phone, whatsapp: p.whatsapp,
       brand: p.brand, model: p.model, condition: p.condition, color: p.color,
-      storage: p.storage, ram: p.ram, network: p.network, card_slot: p.card_slot,
+      storage: p.storage, ram: p.ram, network: p.network,
       rear_cam: p.rear_cam, front_cam: p.front_cam, screen_size: p.screen_size,
-      display_type: p.display_type, chipset: p.chipset, sim: p.sim, os: p.os,
       battery: p.battery, year: p.year, mileage: p.mileage, transmission: p.transmission,
       fuel: p.fuel, bedrooms: p.bedrooms, bathrooms: p.bathrooms, size: p.size,
       processor: p.processor, material: p.material, company: p.company,
@@ -143,13 +142,19 @@ app.post('/users', async (req, res) => {
   try {
     const u = req.body;
     if (!u.email) return res.status(400).json({ error: 'email required' });
-    const userData = {
-      email: u.email.toLowerCase(), name: u.name, phone: u.phone, pfp: u.pfp,
-      boosts: u.boosts || 0, verify: u.verify || '',
-      subscription: u.subscription, subscription_until: u.subscription_until,
-      last_active: new Date().toISOString()
-    };
-    const result = await supabase.from('users').upsert([userData], { onConflict: 'email' }).select().single();
+    const lower = u.email.toLowerCase();
+
+    // ✅ FIX: only update provided fields — don't overwrite boosts/plan/verify with defaults
+    const update = { last_active: new Date().toISOString() };
+    if (u.name !== undefined) update.name = u.name;
+    if (u.phone !== undefined) update.phone = u.phone;
+    if (u.pfp !== undefined) update.pfp = u.pfp;
+    if (u.boosts !== undefined) update.boosts = u.boosts;
+    if (u.verify !== undefined) update.verify = u.verify;
+    if (u.subscription !== undefined) update.subscription = u.subscription;
+    if (u.subscription_until !== undefined) update.subscription_until = u.subscription_until;
+
+    const result = await supabase.from('users').upsert([{ email: lower, ...update }], { onConflict: 'email' }).select().single();
     if (result.error) throw result.error;
     res.json(result.data);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -169,7 +174,9 @@ app.get('/user-sync/:email', async (req, res) => {
     if (result.error && result.error.code !== 'PGRST116') throw result.error;
     if (!result.data) return res.json({ plan: 'free', boosts: 0, verify: '', status: 'active', subscription: null, referrals_count: 0, referral_code: null, deleted: false });
     res.json(result.data);
-  } catch (err) { res.json({ plan: 'free', boosts: 0, verify: '', status: 'active' }); }
+  } catch (err) {
+    res.json({ plan: 'free', boosts: 0, verify: '', status: 'active' });
+  }
 });
 
 app.post('/change-email', async (req, res) => {
@@ -205,9 +212,14 @@ app.post('/referral/set-code', async (req, res) => {
     if (!email || !code) return res.status(400).json({ error: 'email and code required' });
     const cleanCode = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
     if (cleanCode.length < 3) return res.status(400).json({ error: 'Code must be at least 3 characters' });
-    const { data: existing } = await supabase.from('users').select('email, referral_code').eq('referral_code', cleanCode).single();
-    if (existing && existing.email !== email.toLowerCase()) return res.json({ success: false, taken: true, error: 'TAKEN' });
-    const result = await supabase.from('users').update({ referral_code: cleanCode }).eq('email', email.toLowerCase());
+    const lower = email.toLowerCase();
+
+    // Check if code is taken by another user
+    const { data: existing } = await supabase.from('users').select('email').eq('referral_code', cleanCode).maybeSingle();
+    if (existing && existing.email !== lower) return res.json({ success: false, taken: true, error: 'TAKEN' });
+
+    // ✅ FIX: use upsert so it works even if user row missing
+    const result = await supabase.from('users').upsert([{ email: lower, referral_code: cleanCode }], { onConflict: 'email' }).select().single();
     if (result.error) throw result.error;
     res.json({ success: true, code: cleanCode });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -366,11 +378,7 @@ app.post('/admin/restore-user', async (req, res) => {
 
 app.post('/admin/clear-data', async (req, res) => {
   try {
-    const { clear_payments, clear_chats } = req.body;
-    if (clear_payments) {
-      Object.keys(payments).forEach(k => delete payments[k]);
-      try { await supabase.from('payments').delete().neq('id', 0); } catch (e) {}
-    }
+    Object.keys(payments).forEach(k => delete payments[k]);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
