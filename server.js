@@ -38,7 +38,10 @@ app.get('/public-key', (req, res) => {
 // ============================================================
 app.post('/create-payment', async (req, res) => {
   try {
-    const { email, plan, amount, type } = req.body;
+    const email = req.body.email;
+    const plan = req.body.plan;
+    const amount = req.body.amount;
+    const type = req.body.type;
 
     if (!email || !amount) {
       return res.status(400).json({ error: 'Email and amount required' });
@@ -216,11 +219,13 @@ app.post('/products', async (req, res) => {
       fuel: p.fuel, bedrooms: p.bedrooms, bathrooms: p.bathrooms, size: p.size,
       processor: p.processor, material: p.material, company: p.company,
       job_type: p.job_type, salary: p.salary, service_type: p.service_type,
-      experience: p.experience,
+      experience: p.experience, gender: p.gender,
       photos: p.photos || [],
       badge: p.badge || 'NEW',
       is_boosted: p.is_boosted || false,
-      is_vip: p.is_vip || false
+      is_vip: p.is_vip || false,
+      posted_at: p.posted_at || Date.now(),
+      boosted_at: p.boosted_at || 0
     };
     const result = await supabase.from('products').insert([insertData]).select().single();
     if (result.error) throw result.error;
@@ -240,13 +245,26 @@ app.delete('/products/:id', async (req, res) => {
   }
 });
 
+// Boost a product
+app.post('/boost-product', async (req, res) => {
+  try {
+    const { id, is_boosted, boosted_at } = req.body;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const result = await supabase.from('products').update({ is_boosted: is_boosted, boosted_at: boosted_at || Date.now() }).eq('id', id);
+    if (result.error) throw result.error;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================================
 // USERS
 // ============================================================
 app.post('/users', async (req, res) => {
   try {
     const u = req.body;
-    if (!u.email || !u.name) return res.status(400).json({ error: 'email and name required' });
+    if (!u.email) return res.status(400).json({ error: 'email required' });
     const userData = {
       email: u.email.toLowerCase(),
       name: u.name,
@@ -276,19 +294,51 @@ app.get('/users/:email', async (req, res) => {
   }
 });
 
-// ============================================================
-// APP SYNC — used by the app to load real plan/boosts/status
-// ============================================================
+// Sync endpoint used by the app
 app.get('/user-sync/:email', async (req, res) => {
   try {
     const result = await supabase.from('users').select('*').eq('email', req.params.email.toLowerCase()).single();
     if (result.error && result.error.code !== 'PGRST116') throw result.error;
-    if (!result.data) {
-      return res.json({ plan: 'free', boosts: 0, verify: '', status: 'active', subscription: null });
-    }
+    if (!result.data) return res.json({ plan: 'free', boosts: 0, verify: '', status: 'active', subscription: null });
     res.json(result.data);
   } catch (err) {
     res.json({ plan: 'free', boosts: 0, verify: '', status: 'active' });
+  }
+});
+
+// Change user email (moves users + products + reports)
+app.post('/change-email', async (req, res) => {
+  try {
+    const { old_email, new_email } = req.body;
+    if (!old_email || !new_email) return res.status(400).json({ error: 'old and new email required' });
+    const oldE = old_email.toLowerCase();
+    const newE = new_email.toLowerCase();
+
+    const userRes = await supabase.from('users').update({ email: newE }).eq('email', oldE);
+    if (userRes.error) throw userRes.error;
+
+    await supabase.from('products').update({ seller_email: newE }).eq('seller_email', oldE);
+    await supabase.from('reports').update({ reporter_email: newE }).eq('reporter_email', oldE);
+    await supabase.from('reports').update({ reported_email: newE }).eq('reported_email', oldE);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update all products of a seller (name/phone change)
+app.post('/update-my-products', async (req, res) => {
+  try {
+    const { seller_email, seller_name, seller_phone, whatsapp } = req.body;
+    if (!seller_email) return res.status(400).json({ error: 'seller_email required' });
+    const result = await supabase.from('products')
+      .update({ seller_name, seller_phone, whatsapp })
+      .eq('seller_email', seller_email.toLowerCase());
+    if (result.error) throw result.error;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -333,7 +383,7 @@ app.get('/admin/users', async (req, res) => {
   }
 });
 
-// Gift plan
+// Gift a plan
 app.post('/admin/gift-plan', async (req, res) => {
   try {
     const { email, plan } = req.body;
@@ -373,7 +423,7 @@ app.post('/admin/gift-plan', async (req, res) => {
   }
 });
 
-// Add boosts
+// Add boosts only
 app.post('/admin/add-boosts', async (req, res) => {
   try {
     const { email, amount } = req.body;
@@ -418,7 +468,7 @@ app.post('/admin/ban-user', async (req, res) => {
   }
 });
 
-// Get all reports
+// Admin reports
 app.get('/admin/reports', async (req, res) => {
   try {
     const result = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(200);
@@ -429,7 +479,7 @@ app.get('/admin/reports', async (req, res) => {
   }
 });
 
-// Get all payments
+// Admin payments
 app.get('/admin/payments', async (req, res) => {
   try {
     const list = Object.keys(payments).map(ref => ({
@@ -442,17 +492,6 @@ app.get('/admin/payments', async (req, res) => {
       created_at: new Date(payments[ref].createdAt).toISOString()
     })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     res.json(list);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Delete product (admin)
-app.delete('/admin/products/:id', async (req, res) => {
-  try {
-    const result = await supabase.from('products').delete().eq('id', req.params.id);
-    if (result.error) throw result.error;
-    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
