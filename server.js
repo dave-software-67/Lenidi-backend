@@ -22,7 +22,7 @@ app.use(express.json({ limit: '10mb' }));
 
 const payments = {};
 
-app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 3 }); });
+app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 4 }); });
 app.get('/public-key', (req, res) => { res.json({ publicKey: PAYSTACK_PUBLIC }); });
 
 // ============================================================
@@ -143,8 +143,6 @@ app.post('/users', async (req, res) => {
     const u = req.body;
     if (!u.email) return res.status(400).json({ error: 'email required' });
     const lower = u.email.toLowerCase();
-
-    // ✅ FIX: only update provided fields — don't overwrite boosts/plan/verify with defaults
     const update = { last_active: new Date().toISOString() };
     if (u.name !== undefined) update.name = u.name;
     if (u.phone !== undefined) update.phone = u.phone;
@@ -153,7 +151,6 @@ app.post('/users', async (req, res) => {
     if (u.verify !== undefined) update.verify = u.verify;
     if (u.subscription !== undefined) update.subscription = u.subscription;
     if (u.subscription_until !== undefined) update.subscription_until = u.subscription_until;
-
     const result = await supabase.from('users').upsert([{ email: lower, ...update }], { onConflict: 'email' }).select().single();
     if (result.error) throw result.error;
     res.json(result.data);
@@ -213,12 +210,8 @@ app.post('/referral/set-code', async (req, res) => {
     const cleanCode = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
     if (cleanCode.length < 3) return res.status(400).json({ error: 'Code must be at least 3 characters' });
     const lower = email.toLowerCase();
-
-    // Check if code is taken by another user
     const { data: existing } = await supabase.from('users').select('email').eq('referral_code', cleanCode).maybeSingle();
     if (existing && existing.email !== lower) return res.json({ success: false, taken: true, error: 'TAKEN' });
-
-    // ✅ FIX: use upsert so it works even if user row missing
     const result = await supabase.from('users').upsert([{ email: lower, referral_code: cleanCode }], { onConflict: 'email' }).select().single();
     if (result.error) throw result.error;
     res.json({ success: true, code: cleanCode });
@@ -371,6 +364,31 @@ app.post('/admin/restore-user', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'email required' });
     const lower = email.toLowerCase();
     const result = await supabase.from('users').update({ deleted: false, deleted_at: null, status: 'active', last_active: new Date().toISOString() }).eq('email', lower);
+    if (result.error) throw result.error;
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ✅ NEW — Permanent delete — wipes everything
+app.post('/admin/permanent-delete-user', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const lower = email.toLowerCase();
+
+    // 1. Delete products
+    await supabase.from('products').delete().eq('seller_email', lower);
+    // 2. Delete reports (as reporter)
+    await supabase.from('reports').delete().eq('reporter_email', lower);
+    // 3. Delete reports (as reported)
+    await supabase.from('reports').delete().eq('reported_email', lower);
+    // 4. Delete blocks (as blocker)
+    await supabase.from('blocked_users').delete().eq('blocker_email', lower);
+    // 5. Delete blocks (as blocked)
+    await supabase.from('blocked_users').delete().eq('blocked_email', lower);
+    // 6. Delete the user row
+    const result = await supabase.from('users').delete().eq('email', lower);
+
     if (result.error) throw result.error;
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
