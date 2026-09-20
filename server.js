@@ -22,16 +22,8 @@ app.use(express.json({ limit: '10mb' }));
 
 const payments = {};
 
-// ============================================================
-// HEALTH
-// ============================================================
-app.get('/', (req, res) => {
-  res.json({ status: 'ok', app: 'Lenidi Backend' });
-});
-
-app.get('/public-key', (req, res) => {
-  res.json({ publicKey: PAYSTACK_PUBLIC });
-});
+app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend' }); });
+app.get('/public-key', (req, res) => { res.json({ publicKey: PAYSTACK_PUBLIC }); });
 
 // ============================================================
 // PAYSTACK
@@ -40,34 +32,13 @@ app.post('/create-payment', async (req, res) => {
   try {
     const { email, plan, amount, type } = req.body;
     if (!email || !amount) return res.status(400).json({ error: 'Email and amount required' });
-
     const reference = 'LENIDI_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-    payments[reference] = {
-      email: email.toLowerCase(), plan: plan || null, amount: amount,
-      type: type || 'boost', status: 'pending', createdAt: Date.now()
-    };
-
-    const paystackRes = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        email: email, amount: Math.round(amount * 100), currency: 'GHS',
-        reference: reference,
-        callback_url: 'https://lenidi-backend.onrender.com/payment-success'
-      },
-      { headers: { Authorization: 'Bearer ' + PAYSTACK_SECRET, 'Content-Type': 'application/json' } }
-    );
-
-    if (!paystackRes.data || !paystackRes.data.status) {
-      return res.status(500).json({ error: 'Paystack initialization failed' });
-    }
-
-    res.json({
-      reference: reference,
-      publicKey: PAYSTACK_PUBLIC,
-      email: email,
-      authorization_url: paystackRes.data.data.authorization_url,
-      access_code: paystackRes.data.data.access_code
-    });
+    payments[reference] = { email: email.toLowerCase(), plan: plan || null, amount: amount, type: type || 'boost', status: 'pending', createdAt: Date.now() };
+    const paystackRes = await axios.post('https://api.paystack.co/transaction/initialize',
+      { email: email, amount: Math.round(amount * 100), currency: 'GHS', reference: reference, callback_url: 'https://lenidi-backend.onrender.com/payment-success' },
+      { headers: { Authorization: 'Bearer ' + PAYSTACK_SECRET, 'Content-Type': 'application/json' } });
+    if (!paystackRes.data || !paystackRes.data.status) return res.status(500).json({ error: 'Paystack initialization failed' });
+    res.json({ reference: reference, publicKey: PAYSTACK_PUBLIC, email: email, authorization_url: paystackRes.data.data.authorization_url, access_code: paystackRes.data.data.access_code });
   } catch (err) {
     console.error('Create-payment error:', err.response?.data || err.message);
     res.status(500).json({ error: err.response?.data?.message || err.message });
@@ -93,9 +64,7 @@ app.get('/check-payment/:reference', async (req, res) => {
   const ref = req.params.reference;
   try {
     const payment = payments[ref];
-    if (payment && payment.status === 'paid') {
-      return res.json({ status: 'paid', plan: payment.plan, amount: payment.amount, type: payment.type, email: payment.email });
-    }
+    if (payment && payment.status === 'paid') return res.json({ status: 'paid', plan: payment.plan, amount: payment.amount, type: payment.type, email: payment.email });
     const verifyRes = await axios.get('https://api.paystack.co/transaction/verify/' + ref, { headers: { Authorization: 'Bearer ' + PAYSTACK_SECRET } });
     if (verifyRes.data && verifyRes.data.data && verifyRes.data.data.status === 'success') {
       if (payments[ref]) payments[ref].status = 'paid';
@@ -129,8 +98,7 @@ app.post('/products', async (req, res) => {
     const insertData = {
       title: p.title, price: p.price, price_raw: p.price_raw || 0,
       category: p.category, location: p.location, description: p.description,
-      seller_email: p.seller_email, seller_name: p.seller_name,
-      seller_phone: p.seller_phone, whatsapp: p.whatsapp,
+      seller_email: p.seller_email, seller_name: p.seller_name, seller_phone: p.seller_phone, whatsapp: p.whatsapp,
       brand: p.brand, model: p.model, condition: p.condition, color: p.color,
       storage: p.storage, ram: p.ram, network: p.network, card_slot: p.card_slot,
       rear_cam: p.rear_cam, front_cam: p.front_cam, screen_size: p.screen_size,
@@ -229,7 +197,7 @@ app.post('/update-my-products', async (req, res) => {
 });
 
 // ============================================================
-// REFERRAL SYSTEM
+// REFERRAL
 // ============================================================
 app.post('/referral/set-code', async (req, res) => {
   try {
@@ -237,15 +205,10 @@ app.post('/referral/set-code', async (req, res) => {
     if (!email || !code) return res.status(400).json({ error: 'email and code required' });
     const cleanCode = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
     if (cleanCode.length < 3) return res.status(400).json({ error: 'Code must be at least 3 characters' });
-
     const { data: existing } = await supabase.from('users').select('email, referral_code').eq('referral_code', cleanCode).single();
-    if (existing && existing.email !== email.toLowerCase()) {
-      return res.json({ success: false, taken: true, error: 'TAKEN' });
-    }
-
+    if (existing && existing.email !== email.toLowerCase()) return res.json({ success: false, taken: true, error: 'TAKEN' });
     const result = await supabase.from('users').update({ referral_code: cleanCode }).eq('email', email.toLowerCase());
     if (result.error) throw result.error;
-
     res.json({ success: true, code: cleanCode });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -265,18 +228,14 @@ app.post('/referral/redeem', async (req, res) => {
     if (!email || !code) return res.status(400).json({ error: 'email and code required' });
     const cleanCode = String(code).trim().toUpperCase();
     const lowerEmail = email.toLowerCase();
-
     const { data: owner } = await supabase.from('users').select('*').eq('referral_code', cleanCode).single();
     if (!owner) return res.json({ success: false, error: 'Invalid code' });
     if (owner.email === lowerEmail) return res.json({ success: false, error: "Can't use your own code" });
-
     const { data: me } = await supabase.from('users').select('*').eq('email', lowerEmail).single();
     if (me && me.referred_by) return res.json({ success: false, error: 'You already used a referral code' });
-
     const newCount = (owner.referrals_count || 0) + 1;
     await supabase.from('users').update({ referrals_count: newCount }).eq('email', owner.email);
     await supabase.from('users').upsert([{ email: lowerEmail, referred_by: cleanCode }], { onConflict: 'email' });
-
     res.json({ success: true, owner_email: owner.email, count: newCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -290,16 +249,9 @@ app.post('/referral/claim-vip', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.claimed_vip_reward) return res.json({ success: false, error: 'Already claimed' });
     if ((user.referrals_count || 0) < 100) return res.json({ success: false, error: 'Need 100 referrals first' });
-
     const until = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString();
     const newBoosts = (user.boosts || 0) + 200;
-
-    await supabase.from('users').update({
-      plan: 'vip', verify: 'verify-blue', boosts: newBoosts,
-      subscription: 'vip', subscription_until: until,
-      claimed_vip_reward: true, last_active: new Date().toISOString()
-    }).eq('email', lowerEmail);
-
+    await supabase.from('users').update({ plan: 'vip', verify: 'verify-blue', boosts: newBoosts, subscription: 'vip', subscription_until: until, claimed_vip_reward: true, last_active: new Date().toISOString() }).eq('email', lowerEmail);
     res.json({ success: true, boosts: newBoosts });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -324,11 +276,19 @@ app.post('/blocks', async (req, res) => {
 });
 
 // ============================================================
-// ADMIN ROUTES
+// ADMIN
 // ============================================================
 app.get('/admin/users', async (req, res) => {
   try {
     const result = await supabase.from('users').select('*').order('last_active', { ascending: false }).limit(500);
+    if (result.error) throw result.error;
+    res.json(result.data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/deleted-users', async (req, res) => {
+  try {
+    const result = await supabase.from('users').select('*').eq('deleted', true).order('last_active', { ascending: false }).limit(500);
     if (result.error) throw result.error;
     res.json(result.data || []);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -350,11 +310,7 @@ app.post('/admin/gift-plan', async (req, res) => {
     const { data: user } = await supabase.from('users').select('*').eq('email', lower).single();
     const newBoosts = (user?.boosts || 0) + p.boosts;
     const until = new Date(Date.now() + p.days * 24 * 60 * 60 * 1000).toISOString();
-    const payload = {
-      email: lower, plan: plan.toLowerCase(), verify: p.verify, boosts: newBoosts,
-      subscription: plan.toLowerCase(), subscription_until: until,
-      status: 'active', last_active: new Date().toISOString()
-    };
+    const payload = { email: lower, plan: plan.toLowerCase(), verify: p.verify, boosts: newBoosts, subscription: plan.toLowerCase(), subscription_until: until, status: 'active', last_active: new Date().toISOString() };
     const result = await supabase.from('users').upsert([payload], { onConflict: 'email' }).select().single();
     if (result.error) throw result.error;
     res.json({ success: true, user: result.data, boosts: newBoosts });
@@ -368,10 +324,7 @@ app.post('/admin/add-boosts', async (req, res) => {
     const lower = email.toLowerCase();
     const { data: user } = await supabase.from('users').select('*').eq('email', lower).single();
     const newBoosts = (user?.boosts || 0) + parseInt(amount);
-    const result = await supabase.from('users').upsert(
-      [{ email: lower, boosts: newBoosts, plan: user?.plan || 'free', last_active: new Date().toISOString() }],
-      { onConflict: 'email' }
-    ).select().single();
+    const result = await supabase.from('users').upsert([{ email: lower, boosts: newBoosts, plan: user?.plan || 'free', last_active: new Date().toISOString() }], { onConflict: 'email' }).select().single();
     if (result.error) throw result.error;
     res.json({ success: true, boosts: newBoosts });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -394,8 +347,30 @@ app.post('/admin/delete-user', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'email required' });
     const lower = email.toLowerCase();
-    await supabase.from('users').update({ deleted: true, status: 'deleted' }).eq('email', lower);
+    await supabase.from('users').update({ deleted: true, deleted_at: new Date().toISOString(), status: 'deleted' }).eq('email', lower);
     await supabase.from('products').delete().eq('seller_email', lower);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/restore-user', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const lower = email.toLowerCase();
+    const result = await supabase.from('users').update({ deleted: false, deleted_at: null, status: 'active', last_active: new Date().toISOString() }).eq('email', lower);
+    if (result.error) throw result.error;
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/clear-data', async (req, res) => {
+  try {
+    const { clear_payments, clear_chats } = req.body;
+    if (clear_payments) {
+      Object.keys(payments).forEach(k => delete payments[k]);
+      try { await supabase.from('payments').delete().neq('id', 0); } catch (e) {}
+    }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -410,18 +385,11 @@ app.get('/admin/reports', async (req, res) => {
 
 app.get('/admin/payments', async (req, res) => {
   try {
-    const list = Object.keys(payments).map(ref => ({
-      reference: ref, email: payments[ref].email, amount: payments[ref].amount,
-      type: payments[ref].type, plan: payments[ref].plan, status: payments[ref].status,
-      created_at: new Date(payments[ref].createdAt).toISOString()
-    })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const list = Object.keys(payments).map(ref => ({ reference: ref, email: payments[ref].email, amount: payments[ref].amount, type: payments[ref].type, plan: payments[ref].plan, status: payments[ref].status, created_at: new Date(payments[ref].createdAt).toISOString() })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     res.json(list);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============================================================
-// START
-// ============================================================
 app.listen(PORT, () => {
   console.log('Lenidi backend running on port ' + PORT);
   console.log('Supabase:', SUPABASE_URL);
