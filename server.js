@@ -22,6 +22,9 @@ app.use(express.json({ limit: '10mb' }));
 
 const payments = {};
 
+// ============================================================
+// HEALTH
+// ============================================================
 app.get('/', (req, res) => {
   res.json({ status: 'ok', app: 'Lenidi Backend' });
 });
@@ -31,22 +34,18 @@ app.get('/public-key', (req, res) => {
 });
 
 // ============================================================
-// PAYSTACK INITIALIZE - calls real API
+// PAYSTACK — CREATE PAYMENT
 // ============================================================
 app.post('/create-payment', async (req, res) => {
   try {
-    const email = req.body.email;
-    const plan = req.body.plan;
-    const amount = req.body.amount;
-    const type = req.body.type;
-    
+    const { email, plan, amount, type } = req.body;
+
     if (!email || !amount) {
       return res.status(400).json({ error: 'Email and amount required' });
     }
 
     const reference = 'LENIDI_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-    
-    // Save pending payment
+
     payments[reference] = {
       email: email.toLowerCase(),
       plan: plan || null,
@@ -56,12 +55,11 @@ app.post('/create-payment', async (req, res) => {
       createdAt: Date.now()
     };
 
-    // Call Paystack API to initialize transaction
     const paystackRes = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
         email: email,
-        amount: Math.round(amount * 100), // Pesewas
+        amount: Math.round(amount * 100),
         currency: 'GHS',
         reference: reference,
         callback_url: 'https://lenidi-backend.onrender.com/payment-success'
@@ -113,7 +111,6 @@ app.get('/payment-success', (req, res) => {
         h1 { font-size: 22px; color: #1e2a3a; margin-bottom: 8px; }
         p { font-size: 14px; color: #5e6f7e; line-height: 1.6; margin-bottom: 20px; }
         .brand { font-size: 24px; font-weight: 800; color: #ff6b00; margin-bottom: 16px; }
-        .btn { display: inline-block; background: #ff6b00; color: #fff; padding: 12px 28px; border-radius: 60px; text-decoration: none; font-weight: 700; font-size: 14px; }
       </style>
     </head>
     <body>
@@ -155,20 +152,16 @@ app.post('/webhook/paystack', (req, res) => {
 app.get('/check-payment/:reference', async (req, res) => {
   const ref = req.params.reference;
   try {
-    // First check local cache
     const payment = payments[ref];
     if (payment && payment.status === 'paid') {
       return res.json({ status: 'paid', plan: payment.plan, amount: payment.amount, type: payment.type, email: payment.email });
     }
-    // Otherwise verify directly with Paystack
     const verifyRes = await axios.get(
       'https://api.paystack.co/transaction/verify/' + ref,
       { headers: { Authorization: 'Bearer ' + PAYSTACK_SECRET } }
     );
     if (verifyRes.data && verifyRes.data.data && verifyRes.data.data.status === 'success') {
-      if (payments[ref]) {
-        payments[ref].status = 'paid';
-      }
+      if (payments[ref]) payments[ref].status = 'paid';
       return res.json({
         status: 'paid',
         plan: payment ? payment.plan : null,
@@ -177,9 +170,7 @@ app.get('/check-payment/:reference', async (req, res) => {
         email: payment ? payment.email : verifyRes.data.data.customer.email
       });
     }
-    if (!payment) {
-      return res.json({ status: 'not_found' });
-    }
+    if (!payment) return res.json({ status: 'not_found' });
     res.json({ status: payment.status, plan: payment.plan, amount: payment.amount, type: payment.type, email: payment.email });
   } catch (err) {
     if (payments[ref]) {
@@ -257,9 +248,14 @@ app.post('/users', async (req, res) => {
     const u = req.body;
     if (!u.email || !u.name) return res.status(400).json({ error: 'email and name required' });
     const userData = {
-      email: u.email.toLowerCase(), name: u.name, phone: u.phone, pfp: u.pfp,
-      boosts: u.boosts || 0, verify: u.verify || '',
-      subscription: u.subscription, subscription_until: u.subscription_until,
+      email: u.email.toLowerCase(),
+      name: u.name,
+      phone: u.phone,
+      pfp: u.pfp,
+      boosts: u.boosts || 0,
+      verify: u.verify || '',
+      subscription: u.subscription,
+      subscription_until: u.subscription_until,
       last_active: new Date().toISOString()
     };
     const result = await supabase.from('users').upsert([userData], { onConflict: 'email' }).select().single();
@@ -281,6 +277,22 @@ app.get('/users/:email', async (req, res) => {
 });
 
 // ============================================================
+// APP SYNC — used by the app to load real plan/boosts/status
+// ============================================================
+app.get('/user-sync/:email', async (req, res) => {
+  try {
+    const result = await supabase.from('users').select('*').eq('email', req.params.email.toLowerCase()).single();
+    if (result.error && result.error.code !== 'PGRST116') throw result.error;
+    if (!result.data) {
+      return res.json({ plan: 'free', boosts: 0, verify: '', status: 'active', subscription: null });
+    }
+    res.json(result.data);
+  } catch (err) {
+    res.json({ plan: 'free', boosts: 0, verify: '', status: 'active' });
+  }
+});
+
+// ============================================================
 // REPORTS
 // ============================================================
 app.post('/reports', async (req, res) => {
@@ -294,7 +306,7 @@ app.post('/reports', async (req, res) => {
 });
 
 // ============================================================
-// BLOCKED
+// BLOCKED USERS
 // ============================================================
 app.post('/blocks', async (req, res) => {
   try {
@@ -306,6 +318,149 @@ app.post('/blocks', async (req, res) => {
   }
 });
 
+// ============================================================
+// ADMIN ROUTES
+// ============================================================
+
+// Get all users
+app.get('/admin/users', async (req, res) => {
+  try {
+    const result = await supabase.from('users').select('*').order('last_active', { ascending: false }).limit(500);
+    if (result.error) throw result.error;
+    res.json(result.data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Gift plan
+app.post('/admin/gift-plan', async (req, res) => {
+  try {
+    const { email, plan } = req.body;
+    if (!email || !plan) return res.status(400).json({ error: 'email and plan required' });
+
+    const planMap = {
+      plus:    { verify: 'verify-yellow', boosts: 50,  days: 31 },
+      pro:     { verify: 'verify-orange', boosts: 80,  days: 31 },
+      premium: { verify: 'verify-purple', boosts: 100, days: 31 },
+      vip:     { verify: 'verify-blue',   boosts: 200, days: 31 }
+    };
+    const p = planMap[plan.toLowerCase()];
+    if (!p) return res.status(400).json({ error: 'Unknown plan' });
+
+    const lower = email.toLowerCase();
+    const { data: user } = await supabase.from('users').select('*').eq('email', lower).single();
+    const newBoosts = (user?.boosts || 0) + p.boosts;
+    const until = new Date(Date.now() + p.days * 24 * 60 * 60 * 1000).toISOString();
+
+    const payload = {
+      email: lower,
+      plan: plan.toLowerCase(),
+      verify: p.verify,
+      boosts: newBoosts,
+      subscription: plan.toLowerCase(),
+      subscription_until: until,
+      status: 'active',
+      last_active: new Date().toISOString()
+    };
+
+    const result = await supabase.from('users').upsert([payload], { onConflict: 'email' }).select().single();
+    if (result.error) throw result.error;
+
+    res.json({ success: true, user: result.data, boosts: newBoosts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add boosts
+app.post('/admin/add-boosts', async (req, res) => {
+  try {
+    const { email, amount } = req.body;
+    if (!email || !amount) return res.status(400).json({ error: 'email and amount required' });
+
+    const lower = email.toLowerCase();
+    const { data: user } = await supabase.from('users').select('*').eq('email', lower).single();
+    const newBoosts = (user?.boosts || 0) + parseInt(amount);
+
+    const result = await supabase.from('users').upsert(
+      [{ email: lower, boosts: newBoosts, plan: user?.plan || 'free', last_active: new Date().toISOString() }],
+      { onConflict: 'email' }
+    ).select().single();
+
+    if (result.error) throw result.error;
+    res.json({ success: true, boosts: newBoosts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Ban / Suspend / Unban
+app.post('/admin/ban-user', async (req, res) => {
+  try {
+    const { email, status, days } = req.body;
+    if (!email || !status) return res.status(400).json({ error: 'email and status required' });
+
+    const lower = email.toLowerCase();
+    const payload = {
+      email: lower,
+      status: status,
+      suspend_days: days || null,
+      last_active: new Date().toISOString()
+    };
+
+    const result = await supabase.from('users').upsert([payload], { onConflict: 'email' }).select().single();
+    if (result.error) throw result.error;
+
+    res.json({ success: true, user: result.data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all reports
+app.get('/admin/reports', async (req, res) => {
+  try {
+    const result = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(200);
+    if (result.error) throw result.error;
+    res.json(result.data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all payments
+app.get('/admin/payments', async (req, res) => {
+  try {
+    const list = Object.keys(payments).map(ref => ({
+      reference: ref,
+      email: payments[ref].email,
+      amount: payments[ref].amount,
+      type: payments[ref].type,
+      plan: payments[ref].plan,
+      status: payments[ref].status,
+      created_at: new Date(payments[ref].createdAt).toISOString()
+    })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete product (admin)
+app.delete('/admin/products/:id', async (req, res) => {
+  try {
+    const result = await supabase.from('products').delete().eq('id', req.params.id);
+    if (result.error) throw result.error;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// START
+// ============================================================
 app.listen(PORT, () => {
   console.log('Lenidi backend running on port ' + PORT);
   console.log('Supabase:', SUPABASE_URL);
