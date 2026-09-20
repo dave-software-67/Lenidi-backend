@@ -23,11 +23,11 @@ app.use(express.json({ limit: '10mb' }));
 
 const payments = {};
 
-// ============ HEALTH ============
-app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 5 }); });
+// ================= HEALTH =================
+app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 6 }); });
 app.get('/public-key', (req, res) => { res.json({ publicKey: PAYSTACK_PUBLIC }); });
 
-// ============ PAYSTACK ============
+// ================= PAYSTACK =================
 app.post('/create-payment', async (req, res) => {
   try {
     const { email, plan, amount, type } = req.body;
@@ -45,7 +45,7 @@ app.post('/create-payment', async (req, res) => {
 });
 
 app.get('/payment-success', (req, res) => {
-  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Payment Successful</title><style>body{font-family:sans-serif;background:#f5f7fa;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#fff;border-radius:20px;padding:32px 24px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.08)}h1{color:#16a34a}</style></head><body><div class="card"><h1>✓ Payment Successful</h1><p>Return to the Lenidi app</p></div></body></html>');
+  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Payment Successful</title><style>body{font-family:sans-serif;background:#f5f7fa;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#fff;border-radius:20px;padding:32px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.08)}h1{color:#16a34a}</style></head><body><div class="card"><h1>✓ Payment Successful</h1><p>Return to the Lenidi app</p></div></body></html>');
 });
 
 app.post('/webhook/paystack', (req, res) => {
@@ -79,7 +79,7 @@ app.get('/check-payment/:reference', async (req, res) => {
 
 app.get('/all-payments', (req, res) => { res.json(payments); });
 
-// ============ PRODUCTS ============
+// ================= PRODUCTS =================
 app.get('/products', async (req, res) => {
   try {
     const result = await supabase.from('products').select('*').order('created_at', { ascending: false }).limit(200);
@@ -132,7 +132,7 @@ app.post('/boost-product', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ USERS ============
+// ================= USERS =================
 app.post('/users', async (req, res) => {
   try {
     const u = req.body;
@@ -192,7 +192,7 @@ app.post('/update-my-products', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ REFERRAL ============
+// ================= REFERRAL =================
 app.post('/referral/set-code', async (req, res) => {
   try {
     const { email, code } = req.body;
@@ -251,7 +251,7 @@ app.post('/referral/claim-vip', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ REPORTS & BLOCKS ============
+// ================= REPORTS & BLOCKS =================
 app.post('/reports', async (req, res) => {
   try {
     const result = await supabase.from('reports').insert([req.body]).select().single();
@@ -268,7 +268,7 @@ app.post('/blocks', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ ADMIN USERS ============
+// ================= ADMIN: USERS =================
 app.get('/admin/users', async (req, res) => {
   try {
     const result = await supabase.from('users').select('*').order('last_active', { ascending: false }).limit(500);
@@ -333,7 +333,7 @@ app.post('/admin/ban-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE USER → MOVES to deleted_users
+// DELETE → MOVE to deleted_users
 app.post('/admin/delete-user', async (req, res) => {
   try {
     const { email } = req.body;
@@ -348,24 +348,23 @@ app.post('/admin/delete-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// RESTORE USER → MOVES back to users
+// RESTORE → MOVE back
 app.post('/admin/restore-user', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'email required' });
     const lower = email.toLowerCase();
     const { data: user } = await supabase.from('deleted_users').select('*').eq('email', lower).single();
-    if (!user) return res.status(404).json({ error: 'Deleted user not found' });
+    if (!user) return res.status(404).json({ error: 'Not found' });
     const restored = { ...user, status: 'active' };
     delete restored.original_deleted_at;
-    delete restored.restored_at;
     await supabase.from('users').insert([restored]);
     await supabase.from('deleted_users').delete().eq('email', lower);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PERMANENT DELETE → wipes everywhere
+// PERMANENT DELETE
 app.post('/admin/permanent-delete-user', async (req, res) => {
   try {
     const { email } = req.body;
@@ -376,6 +375,7 @@ app.post('/admin/permanent-delete-user', async (req, res) => {
     await supabase.from('reports').delete().eq('reported_email', lower);
     await supabase.from('blocked_users').delete().eq('blocker_email', lower);
     await supabase.from('blocked_users').delete().eq('blocked_email', lower);
+    await supabase.from('dm_messages').delete().eq('user_email', lower);
     await supabase.from('deleted_users').delete().eq('email', lower);
     await supabase.from('users').delete().eq('email', lower);
     res.json({ success: true });
@@ -392,7 +392,7 @@ app.post('/admin/delete-product', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ADMIN REPORTS + PAYMENTS
+// REPORTS + PAYMENTS
 app.get('/admin/reports', async (req, res) => {
   try {
     const result = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(200);
@@ -412,7 +412,7 @@ app.get('/admin/payments', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ BROADCASTS ============
+// ================= BROADCASTS =================
 app.get('/broadcasts', async (req, res) => {
   try {
     const result = await supabase.from('broadcasts').select('*').order('created_at', { ascending: false }).limit(200);
@@ -440,7 +440,8 @@ app.post('/admin/delete-broadcast', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ DM ============
+// ================= DM (user ↔ admin) =================
+// List all conversations (for admin)
 app.get('/dm/conversations', async (req, res) => {
   try {
     const { data } = await supabase.from('dm_messages').select('user_email, body, sender, created_at').order('created_at', { ascending: false }).limit(500);
@@ -456,19 +457,23 @@ app.get('/dm/conversations', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Get messages for a specific user
 app.get('/dm/:email', async (req, res) => {
   try {
-    const result = await supabase.from('dm_messages').select('*').eq('user_email', req.params.email.toLowerCase()).order('created_at', { ascending: true }).limit(500);
+    const email = decodeURIComponent(req.params.email).toLowerCase().trim();
+    const result = await supabase.from('dm_messages').select('*').eq('user_email', email).order('created_at', { ascending: true }).limit(500);
     if (result.error) throw result.error;
     res.json(result.data || []);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Send DM (from admin OR user)
 app.post('/dm/send', async (req, res) => {
   try {
     const { user_email, sender, body } = req.body;
     if (!user_email || !sender || !body) return res.status(400).json({ error: 'missing fields' });
-    const result = await supabase.from('dm_messages').insert([{ user_email: user_email.toLowerCase(), sender, body }]).select().single();
+    const cleanEmail = user_email.toLowerCase().trim();
+    const result = await supabase.from('dm_messages').insert([{ user_email: cleanEmail, sender, body }]).select().single();
     if (result.error) throw result.error;
     res.json({ success: true, message: result.data });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -483,7 +488,7 @@ app.post('/admin/delete-dm', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ ADMIN AI ============
+// ================= ADMIN AI =================
 app.post('/admin/ai', async (req, res) => {
   try {
     const { message, history } = req.body;
@@ -493,17 +498,8 @@ app.post('/admin/ai', async (req, res) => {
       const cmdResult = await handleAdminCommand(cleanCmd);
       return res.json({ type: 'command', reply: cmdResult });
     }
-    const messages = [
-      { role: 'system', content: 'You are Lenidi Admin AI. Help the admin manage the marketplace. Keep answers short and helpful. Commands: /ban_email, /unban_email, /delete_email, /undelete_email, /wipe_email, /gift_vip_email, /gift_pro_email, /gift_plus_email, /gift_premium_email, /gift_N_boosts_email' },
-      ...(Array.isArray(history) ? history.slice(-6) : []),
-      { role: 'user', content: message }
-    ];
-    const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions',
-      { model: 'openai/gpt-oss-20b', messages, temperature: 0.7, max_tokens: 400 },
-      { headers: { Authorization: 'Bearer ' + GROQ_API_KEY, 'Content-Type': 'application/json' } }
-    );
-    const reply = groqRes.data?.choices?.[0]?.message?.content?.trim() || 'No response';
-    res.json({ type: 'chat', reply });
+    // Admin AI ONLY supports commands — no chat
+    res.json({ type: 'chat', reply: '⚙️ I only support commands. Try: /ban_email, /unban_email, /delete_email, /undelete_email, /wipe_email, /gift_vip_email, /gift_pro_email, /gift_plus_email, /gift_premium_email, /gift_N_boosts_email' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -534,7 +530,6 @@ async function handleAdminCommand(cmd) {
       if (!user) return '❌ Deleted user not found';
       const restored = { ...user, status: 'active' };
       delete restored.original_deleted_at;
-      delete restored.restored_at;
       await supabase.from('users').insert([restored]);
       await supabase.from('deleted_users').delete().eq('email', email);
       return '✅ Restored ' + email;
@@ -577,7 +572,7 @@ async function handleAdminCommand(cmd) {
   } catch (err) { return '❌ Error: ' + err.message; }
 }
 
-// ============ ADMIN CLEAR DATA ============
+// CLEAR DATA
 app.post('/admin/clear-data', async (req, res) => {
   try {
     Object.keys(payments).forEach(k => delete payments[k]);
@@ -585,9 +580,8 @@ app.post('/admin/clear-data', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============ START ============
+// ================= START =================
 app.listen(PORT, () => {
   console.log('Lenidi backend running on port ' + PORT);
-  console.log('Supabase:', SUPABASE_URL);
-  console.log('Version: v5');
+  console.log('Version: v6');
 });
