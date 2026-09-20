@@ -10,7 +10,6 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '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';
 
 if (!PAYSTACK_SECRET || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   console.error('Missing environment variables!');
@@ -24,7 +23,7 @@ app.use(express.json({ limit: '10mb' }));
 const payments = {};
 
 // ================= HEALTH =================
-app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 6 }); });
+app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 7 }); });
 app.get('/public-key', (req, res) => { res.json({ publicKey: PAYSTACK_PUBLIC }); });
 
 // ================= PAYSTACK =================
@@ -333,7 +332,6 @@ app.post('/admin/ban-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE → MOVE to deleted_users
 app.post('/admin/delete-user', async (req, res) => {
   try {
     const { email } = req.body;
@@ -348,7 +346,6 @@ app.post('/admin/delete-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// RESTORE → MOVE back
 app.post('/admin/restore-user', async (req, res) => {
   try {
     const { email } = req.body;
@@ -364,7 +361,6 @@ app.post('/admin/restore-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PERMANENT DELETE
 app.post('/admin/permanent-delete-user', async (req, res) => {
   try {
     const { email } = req.body;
@@ -382,7 +378,6 @@ app.post('/admin/permanent-delete-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE PRODUCT (admin)
 app.post('/admin/delete-product', async (req, res) => {
   try {
     const { id } = req.body;
@@ -392,7 +387,6 @@ app.post('/admin/delete-product', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// REPORTS + PAYMENTS
 app.get('/admin/reports', async (req, res) => {
   try {
     const result = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(200);
@@ -441,7 +435,6 @@ app.post('/admin/delete-broadcast', async (req, res) => {
 });
 
 // ================= DM (user ↔ admin) =================
-// List all conversations (for admin)
 app.get('/dm/conversations', async (req, res) => {
   try {
     const { data } = await supabase.from('dm_messages').select('user_email, body, sender, created_at').order('created_at', { ascending: false }).limit(500);
@@ -457,7 +450,6 @@ app.get('/dm/conversations', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Get messages for a specific user
 app.get('/dm/:email', async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).toLowerCase().trim();
@@ -467,7 +459,6 @@ app.get('/dm/:email', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Send DM (from admin OR user)
 app.post('/dm/send', async (req, res) => {
   try {
     const { user_email, sender, body } = req.body;
@@ -488,90 +479,6 @@ app.post('/admin/delete-dm', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ================= ADMIN AI =================
-app.post('/admin/ai', async (req, res) => {
-  try {
-    const { message, history } = req.body;
-    if (!message) return res.status(400).json({ error: 'message required' });
-    const cleanCmd = message.trim();
-    if (cleanCmd.startsWith('/')) {
-      const cmdResult = await handleAdminCommand(cleanCmd);
-      return res.json({ type: 'command', reply: cmdResult });
-    }
-    // Admin AI ONLY supports commands — no chat
-    res.json({ type: 'chat', reply: '⚙️ I only support commands. Try: /ban_email, /unban_email, /delete_email, /undelete_email, /wipe_email, /gift_vip_email, /gift_pro_email, /gift_plus_email, /gift_premium_email, /gift_N_boosts_email' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-async function handleAdminCommand(cmd) {
-  try {
-    if (cmd.indexOf('/ban_') === 0) {
-      const email = cmd.slice(5).trim().toLowerCase();
-      await supabase.from('users').upsert([{ email, status: 'banned' }], { onConflict: 'email' });
-      return '⛔ Banned ' + email;
-    }
-    if (cmd.indexOf('/unban_') === 0) {
-      const email = cmd.slice(7).trim().toLowerCase();
-      await supabase.from('users').upsert([{ email, status: 'active' }], { onConflict: 'email' });
-      return '✅ Unbanned ' + email;
-    }
-    if (cmd.indexOf('/delete_') === 0) {
-      const email = cmd.slice(8).trim().toLowerCase();
-      const { data: user } = await supabase.from('users').select('*').eq('email', email).single();
-      if (!user) return '❌ User not found';
-      await supabase.from('deleted_users').insert([{ ...user, original_deleted_at: new Date().toISOString() }]);
-      await supabase.from('products').delete().eq('seller_email', email);
-      await supabase.from('users').delete().eq('email', email);
-      return '🗑️ Deleted ' + email + ' → Deleted tab';
-    }
-    if (cmd.indexOf('/undelete_') === 0 || cmd.indexOf('/restore_') === 0) {
-      const email = cmd.replace('/undelete_','').replace('/restore_','').trim().toLowerCase();
-      const { data: user } = await supabase.from('deleted_users').select('*').eq('email', email).single();
-      if (!user) return '❌ Deleted user not found';
-      const restored = { ...user, status: 'active' };
-      delete restored.original_deleted_at;
-      await supabase.from('users').insert([restored]);
-      await supabase.from('deleted_users').delete().eq('email', email);
-      return '✅ Restored ' + email;
-    }
-    if (cmd.indexOf('/wipe_') === 0) {
-      const email = cmd.slice(6).trim().toLowerCase();
-      await supabase.from('products').delete().eq('seller_email', email);
-      await supabase.from('reports').delete().eq('reporter_email', email);
-      await supabase.from('reports').delete().eq('reported_email', email);
-      await supabase.from('deleted_users').delete().eq('email', email);
-      await supabase.from('users').delete().eq('email', email);
-      return '💀 Wiped ' + email + ' forever';
-    }
-    const giftMatch = cmd.match(/^\/gift_(plus|pro|premium|vip)_(.+)$/i);
-    if (giftMatch) {
-      const plan = giftMatch[1].toLowerCase();
-      const email = giftMatch[2].trim().toLowerCase();
-      const planMap = {
-        plus:    { verify: 'verify-yellow', boosts: 50 },
-        pro:     { verify: 'verify-orange', boosts: 80 },
-        premium: { verify: 'verify-purple', boosts: 100 },
-        vip:     { verify: 'verify-blue',   boosts: 200 }
-      };
-      const p = planMap[plan];
-      const { data: user } = await supabase.from('users').select('*').eq('email', email).single();
-      const newBoosts = (user?.boosts || 0) + p.boosts;
-      await supabase.from('users').upsert([{ email, plan, verify: p.verify, boosts: newBoosts, status: 'active' }], { onConflict: 'email' });
-      return '✅ Gifted ' + plan.toUpperCase() + ' to ' + email;
-    }
-    const boostMatch = cmd.match(/^\/gift_(\d+)_boosts_(.+)$/i);
-    if (boostMatch) {
-      const amount = parseInt(boostMatch[1]);
-      const email = boostMatch[2].trim().toLowerCase();
-      const { data: user } = await supabase.from('users').select('*').eq('email', email).single();
-      const newBoosts = (user?.boosts || 0) + amount;
-      await supabase.from('users').upsert([{ email, boosts: newBoosts, plan: user?.plan || 'free' }], { onConflict: 'email' });
-      return '✅ Gifted ' + amount + ' boosts to ' + email;
-    }
-    return '❓ Unknown command';
-  } catch (err) { return '❌ Error: ' + err.message; }
-}
-
 // CLEAR DATA
 app.post('/admin/clear-data', async (req, res) => {
   try {
@@ -583,5 +490,5 @@ app.post('/admin/clear-data', async (req, res) => {
 // ================= START =================
 app.listen(PORT, () => {
   console.log('Lenidi backend running on port ' + PORT);
-  console.log('Version: v6');
+  console.log('Version: v7');
 });
