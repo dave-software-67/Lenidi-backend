@@ -10,6 +10,8 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_PUBLIC = process.env.PAYSTACK_PUBLIC_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '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';
+const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 if (!PAYSTACK_SECRET || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   console.error('Missing environment variables!');
@@ -21,9 +23,10 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 const payments = {};
+const adminAiMemory = { conversations: [] };
 
 // ================= HEALTH =================
-app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 7 }); });
+app.get('/', (req, res) => { res.json({ status: 'ok', app: 'Lenidi Backend', v: 8 }); });
 app.get('/public-key', (req, res) => { res.json({ publicKey: PAYSTACK_PUBLIC }); });
 
 // ================= PAYSTACK =================
@@ -267,6 +270,86 @@ app.post('/blocks', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ================= DM =================
+app.get('/dm/conversations', async (req, res) => {
+  try {
+    const { data } = await supabase.from('dm_messages').select('user_email, body, sender, created_at').order('created_at', { ascending: false }).limit(500);
+    const seen = {};
+    const list = [];
+    (data || []).forEach(m => {
+      if (!seen[m.user_email]) {
+        seen[m.user_email] = true;
+        list.push({ user_email: m.user_email, last_body: m.body, last_sender: m.sender, last_at: m.created_at });
+      }
+    });
+    res.json(list);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/dm/:email', async (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email).toLowerCase().trim();
+    const result = await supabase.from('dm_messages').select('*').eq('user_email', email).order('created_at', { ascending: true }).limit(500);
+    if (result.error) throw result.error;
+    res.json(result.data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/dm/send', async (req, res) => {
+  try {
+    const { user_email, sender, body } = req.body;
+    if (!user_email || !sender || !body) return res.status(400).json({ error: 'missing fields' });
+    const cleanEmail = user_email.toLowerCase().trim();
+    const result = await supabase.from('dm_messages').insert([{ user_email: cleanEmail, sender, body }]).select().single();
+    if (result.error) throw result.error;
+    res.json({ success: true, message: result.data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/delete-dm', async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    await supabase.from('dm_messages').delete().eq('id', id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ================= BROADCASTS =================
+app.get('/broadcasts', async (req, res) => {
+  try {
+    const result = await supabase.from('broadcasts').select('*').order('created_at', { ascending: false }).limit(200);
+    if (result.error) throw result.error;
+    res.json(result.data || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/send-broadcast', async (req, res) => {
+  try {
+    const { title, body } = req.body;
+    if (!body) return res.status(400).json({ error: 'body required' });
+    const result = await supabase.from('broadcasts').insert([{ title: title || 'Broadcast', body }]).select().single();
+    if (result.error) throw result.error;
+    res.json({ success: true, broadcast: result.data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/delete-broadcast', async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    await supabase.from('broadcasts').delete().eq('id', id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/delete-all-broadcasts', async (req, res) => {
+  try {
+    await supabase.from('broadcasts').delete().neq('id', 0);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ================= ADMIN: USERS =================
 app.get('/admin/users', async (req, res) => {
   try {
@@ -406,89 +489,214 @@ app.get('/admin/payments', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ================= BROADCASTS =================
-app.get('/broadcasts', async (req, res) => {
-  try {
-    const result = await supabase.from('broadcasts').select('*').order('created_at', { ascending: false }).limit(200);
-    if (result.error) throw result.error;
-    res.json(result.data || []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/send-broadcast', async (req, res) => {
-  try {
-    const { title, body } = req.body;
-    if (!body) return res.status(400).json({ error: 'body required' });
-    const result = await supabase.from('broadcasts').insert([{ title: title || 'Broadcast', body }]).select().single();
-    if (result.error) throw result.error;
-    res.json({ success: true, broadcast: result.data });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/delete-broadcast', async (req, res) => {
-  try {
-    const { id } = req.body;
-    if (!id) return res.status(400).json({ error: 'id required' });
-    await supabase.from('broadcasts').delete().eq('id', id);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ================= DM (user ↔ admin) =================
-app.get('/dm/conversations', async (req, res) => {
-  try {
-    const { data } = await supabase.from('dm_messages').select('user_email, body, sender, created_at').order('created_at', { ascending: false }).limit(500);
-    const seen = {};
-    const list = [];
-    (data || []).forEach(m => {
-      if (!seen[m.user_email]) {
-        seen[m.user_email] = true;
-        list.push({ user_email: m.user_email, last_body: m.body, last_sender: m.sender, last_at: m.created_at });
-      }
-    });
-    res.json(list);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/dm/:email', async (req, res) => {
-  try {
-    const email = decodeURIComponent(req.params.email).toLowerCase().trim();
-    const result = await supabase.from('dm_messages').select('*').eq('user_email', email).order('created_at', { ascending: true }).limit(500);
-    if (result.error) throw result.error;
-    res.json(result.data || []);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/dm/send', async (req, res) => {
-  try {
-    const { user_email, sender, body } = req.body;
-    if (!user_email || !sender || !body) return res.status(400).json({ error: 'missing fields' });
-    const cleanEmail = user_email.toLowerCase().trim();
-    const result = await supabase.from('dm_messages').insert([{ user_email: cleanEmail, sender, body }]).select().single();
-    if (result.error) throw result.error;
-    res.json({ success: true, message: result.data });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/admin/delete-dm', async (req, res) => {
-  try {
-    const { id } = req.body;
-    if (!id) return res.status(400).json({ error: 'id required' });
-    await supabase.from('dm_messages').delete().eq('id', id);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// CLEAR DATA
 app.post('/admin/clear-data', async (req, res) => {
   try {
     Object.keys(payments).forEach(k => delete payments[k]);
+    adminAiMemory.conversations = [];
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ================= ADMIN AI (SMART CHAT) =================
+app.post('/admin/ai', async (req, res) => {
+  try {
+    const { message, clearHistory } = req.body;
+    if (clearHistory) {
+      adminAiMemory.conversations = [];
+      return res.json({ success: true, cleared: true });
+    }
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    // Build system prompt with app context
+    const [usersRes, productsRes, reportsRes, broadcastsRes, dmsRes] = await Promise.all([
+      supabase.from('users').select('email, name, phone, plan, status, boosts, referrals_count, last_active').limit(500),
+      supabase.from('products').select('id, title, price, seller_email, seller_name, category, is_boosted, is_vip').limit(500),
+      supabase.from('reports').select('reporter_email, reported_email, reason').limit(200),
+      supabase.from('broadcasts').select('id, title, body, created_at').limit(200),
+      supabase.from('dm_messages').select('user_email, body, sender, created_at').order('created_at', { ascending: false }).limit(100)
+    ]);
+
+    const users = usersRes.data || [];
+    const products = productsRes.data || [];
+    const reports = reportsRes.data || [];
+    const broadcasts = broadcastsRes.data || [];
+    const dms = dmsRes.data || [];
+
+    const totalUsers = users.length;
+    const bannedUsers = users.filter(u => u.status === 'banned').length;
+    const suspendedUsers = users.filter(u => u.status === 'suspended').length;
+    const activeUsers = users.filter(u => (u.status || 'active') === 'active').length;
+    const totalProducts = products.length;
+    const boostedProducts = products.filter(p => p.is_boosted).length;
+    const vipProducts = products.filter(p => p.is_vip).length;
+    const totalReports = reports.length;
+    const totalBroadcasts = broadcasts.length;
+
+    const planCounts = { free: 0, plus: 0, pro: 0, premium: 0, vip: 0 };
+    users.forEach(u => { const p = (u.plan || 'free').toLowerCase(); if (planCounts[p] !== undefined) planCounts[p]++; });
+
+    const topSellers = {};
+    products.forEach(p => { if (p.seller_email) topSellers[p.seller_email] = (topSellers[p.seller_email] || 0) + 1; });
+    const topSellersList = Object.entries(topSellers).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([email, count]) => `${email} (${count} ads)`).join(', ');
+
+    const systemPrompt = `You are Lenidi Admin AI — the assistant inside the Lenidi marketplace admin panel. You help the owner manage the app.
+
+LIVE APP STATS RIGHT NOW:
+- Total users: ${totalUsers}
+- Active: ${activeUsers} | Banned: ${bannedUsers} | Suspended: ${suspendedUsers}
+- Plans: ${JSON.stringify(planCounts)}
+- Total products: ${totalProducts} (${boostedProducts} boosted, ${vipProducts} VIP)
+- Total reports: ${totalReports}
+- Total broadcasts: ${totalBroadcasts}
+- Top sellers: ${topSellersList || 'None yet'}
+
+USER LIST (emails only): ${users.slice(0, 100).map(u => u.email).join(', ')}
+
+RECENT REPORTS: ${reports.slice(0, 10).map(r => `${r.reporter_email} reported ${r.reported_email}: ${r.reason}`).join(' | ') || 'None'}
+
+YOU CAN DO THESE ACTIONS. When the admin asks you to do something, respond with a JSON action block wrapped in [ACTION]...[/ACTION] tags AFTER your normal reply text.
+
+Available actions:
+- {"action":"ban","email":"..."} — permanently ban a user
+- {"action":"suspend","email":"...","days":7} — suspend for N days
+- {"action":"unban","email":"..."} — remove ban/suspension
+- {"action":"delete_user","email":"..."} — move user to Deleted tab
+- {"action":"wipe_user","email":"..."} — permanently delete user
+- {"action":"gift_plan","email":"...","plan":"plus|pro|premium|vip"} — give a plan
+- {"action":"gift_boosts","email":"...","amount":100} — add boosts
+- {"action":"broadcast","title":"...","body":"..."} — send broadcast to all users
+- {"action":"delete_product","id":123} — delete a product
+- {"action":"delete_broadcast","id":123} — delete a broadcast
+- {"action":"clear_broadcasts"} — delete ALL broadcasts
+
+Rules:
+- ALWAYS confirm the action in your reply text (e.g. "Done! Banned sam@gmail.com ✅")
+- ONLY include [ACTION] block if the user actually requested an action
+- If the user just asks a question, reply normally without [ACTION]
+- Keep replies short, friendly, use emojis
+- If asked to do something with an email, use the EXACT email
+- If the user says "ban sam" without an email, ask which email
+- You remember all previous conversations — the admin's name, past actions, etc.`;
+
+    // Add to memory
+    adminAiMemory.conversations.push({ role: 'user', content: message });
+    if (adminAiMemory.conversations.length > 40) {
+      adminAiMemory.conversations = adminAiMemory.conversations.slice(-40);
+    }
+
+    // Call Groq
+    const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+      model: GROQ_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...adminAiMemory.conversations
+      ],
+      temperature: 0.6,
+      max_tokens: 800
+    }, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GROQ_API_KEY }
+    });
+
+    const aiReply = groqRes.data?.choices?.[0]?.message?.content?.trim() || 'No response.';
+
+    // Add AI reply to memory
+    adminAiMemory.conversations.push({ role: 'assistant', content: aiReply });
+
+    // Parse actions
+    const actionMatches = [...aiReply.matchAll(/\[ACTION\]([\s\S]*?)\[\/ACTION\]/g)];
+    const actions = [];
+    const actionResults = [];
+
+    for (const match of actionMatches) {
+      try {
+        const act = JSON.parse(match[1].trim());
+        actions.push(act);
+
+        if (act.action === 'ban') {
+          await supabase.from('users').upsert([{ email: act.email.toLowerCase(), status: 'banned' }], { onConflict: 'email' });
+          actionResults.push(`✅ Banned ${act.email}`);
+        } else if (act.action === 'suspend') {
+          await supabase.from('users').upsert([{ email: act.email.toLowerCase(), status: 'suspended', suspend_days: act.days || 7 }], { onConflict: 'email' });
+          actionResults.push(`⏸️ Suspended ${act.email} for ${act.days || 7} days`);
+        } else if (act.action === 'unban') {
+          await supabase.from('users').upsert([{ email: act.email.toLowerCase(), status: 'active' }], { onConflict: 'email' });
+          actionResults.push(`✅ Unbanned ${act.email}`);
+        } else if (act.action === 'delete_user') {
+          const { data: u } = await supabase.from('users').select('*').eq('email', act.email.toLowerCase()).single();
+          if (u) {
+            await supabase.from('deleted_users').insert([{ ...u, original_deleted_at: new Date().toISOString() }]);
+            await supabase.from('products').delete().eq('seller_email', act.email.toLowerCase());
+            await supabase.from('users').delete().eq('email', act.email.toLowerCase());
+            actionResults.push(`🗑️ Deleted ${act.email} → Deleted tab`);
+          } else actionResults.push(`❌ User ${act.email} not found`);
+        } else if (act.action === 'wipe_user') {
+          const lower = act.email.toLowerCase();
+          await supabase.from('products').delete().eq('seller_email', lower);
+          await supabase.from('reports').delete().eq('reporter_email', lower);
+          await supabase.from('reports').delete().eq('reported_email', lower);
+          await supabase.from('blocked_users').delete().eq('blocker_email', lower);
+          await supabase.from('blocked_users').delete().eq('blocked_email', lower);
+          await supabase.from('dm_messages').delete().eq('user_email', lower);
+          await supabase.from('deleted_users').delete().eq('email', lower);
+          await supabase.from('users').delete().eq('email', lower);
+          actionResults.push(`💀 Wiped ${act.email} forever`);
+        } else if (act.action === 'gift_plan') {
+          const planMap = {
+            plus:    { verify: 'verify-yellow', boosts: 50 },
+            pro:     { verify: 'verify-orange', boosts: 80 },
+            premium: { verify: 'verify-purple', boosts: 100 },
+            vip:     { verify: 'verify-blue',   boosts: 200 }
+          };
+          const p = planMap[act.plan.toLowerCase()];
+          if (p) {
+            const lower = act.email.toLowerCase();
+            const { data: u } = await supabase.from('users').select('*').eq('email', lower).single();
+            const newBoosts = (u?.boosts || 0) + p.boosts;
+            const until = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString();
+            await supabase.from('users').upsert([{ email: lower, plan: act.plan.toLowerCase(), verify: p.verify, boosts: newBoosts, subscription: act.plan.toLowerCase(), subscription_until: until, status: 'active' }], { onConflict: 'email' });
+            actionResults.push(`👑 Gifted ${act.plan.toUpperCase()} to ${act.email}`);
+          } else actionResults.push(`❌ Unknown plan ${act.plan}`);
+        } else if (act.action === 'gift_boosts') {
+          const lower = act.email.toLowerCase();
+          const { data: u } = await supabase.from('users').select('*').eq('email', lower).single();
+          const newBoosts = (u?.boosts || 0) + parseInt(act.amount);
+          await supabase.from('users').upsert([{ email: lower, boosts: newBoosts, plan: u?.plan || 'free' }], { onConflict: 'email' });
+          actionResults.push(`⚡ Gifted ${act.amount} boosts to ${act.email}`);
+        } else if (act.action === 'broadcast') {
+          await supabase.from('broadcasts').insert([{ title: act.title || 'Broadcast', body: act.body }]);
+          actionResults.push(`📢 Broadcast sent`);
+        } else if (act.action === 'delete_product') {
+          await supabase.from('products').delete().eq('id', act.id);
+          actionResults.push(`🗑️ Product ${act.id} deleted`);
+        } else if (act.action === 'delete_broadcast') {
+          await supabase.from('broadcasts').delete().eq('id', act.id);
+          actionResults.push(`🗑️ Broadcast ${act.id} deleted`);
+        } else if (act.action === 'clear_broadcasts') {
+          await supabase.from('broadcasts').delete().neq('id', 0);
+          actionResults.push(`🗑️ All broadcasts cleared`);
+        }
+      } catch (parseErr) {
+        console.warn('Action parse error:', parseErr.message);
+      }
+    }
+
+    // Clean reply (remove ACTION tags)
+    const cleanReply = aiReply.replace(/\[ACTION\][\s\S]*?\[\/ACTION\]/g, '').trim();
+
+    res.json({
+      reply: cleanReply,
+      actions: actions,
+      actionResults: actionResults,
+      hasAction: actions.length > 0
+    });
+  } catch (err) {
+    console.error('Admin AI error:', err.message);
+    res.status(500).json({ error: err.message, reply: '⚠️ AI error: ' + err.message });
+  }
 });
 
 // ================= START =================
 app.listen(PORT, () => {
   console.log('Lenidi backend running on port ' + PORT);
-  console.log('Version: v7');
+  console.log('Version: v8');
 });
